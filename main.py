@@ -2,10 +2,20 @@ import logging
 
 import coloredlogs
 
+import argparse
 from Coach import Coach
-from othello.OthelloGame import OthelloGame as Game
-from othello.pytorch.NNet import NNetWrapper as nn
 from utils import *
+
+parser = argparse.ArgumentParser()
+parser.add_argument('--game', default='othello', help='Name of the game to train')
+cmd_args, _ = parser.parse_known_args()
+
+if cmd_args.game.lower() == 'klondike':
+    from game.KlondikeGame import KlondikeGame as Game
+    from klondike.klondikeNNet import NNet as nn
+else:
+    from othello.OthelloGame import OthelloGame as Game
+    from othello.pytorch.NNet import NNetWrapper as nn
 
 log = logging.getLogger(__name__)
 
@@ -31,7 +41,10 @@ args = dotdict({
 
 def main():
     log.info('Loading %s...', Game.__name__)
-    g = Game(6)
+    if cmd_args.game.lower() == 'othello':
+        g = Game(6)
+    else:
+        g = Game()
 
     log.info('Loading %s...', nn.__name__)
     nnet = nn(g)
