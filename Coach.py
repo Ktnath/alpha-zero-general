@@ -4,6 +4,7 @@ import sys
 from collections import deque
 from pickle import Pickler, Unpickler
 from random import shuffle
+import csv
 
 import numpy as np
 from tqdm import tqdm
@@ -28,6 +29,8 @@ class Coach():
         self.mcts = MCTS(self.game, self.nnet, self.args)
         self.trainExamplesHistory = []  # history of examples from args.numItersForTrainExamplesHistory latest iterations
         self.skipFirstSelfPlay = False  # can be overriden in loadTrainExamples()
+        self.prediction_values = []
+        self.episode_results = []
 
     def executeEpisode(self):
         """
@@ -53,6 +56,12 @@ class Coach():
         while True:
             episodeStep += 1
             canonicalBoard = self.game.getCanonicalForm(board, self.curPlayer)
+            # predict value for analysis
+            try:
+                _, v_pred = self.nnet.predict(canonicalBoard)
+                self.prediction_values.append(float(v_pred))
+            except Exception:
+                pass
             temp = int(episodeStep < self.args.tempThreshold)
 
             pi = self.mcts.getActionProb(canonicalBoard, temp=temp)
@@ -66,6 +75,7 @@ class Coach():
             r = self.game.getGameEnded(board, self.curPlayer)
 
             if r != 0:
+                self.episode_results.append(float(r))
                 return [(x[0], x[2], r * ((-1) ** (x[1] != self.curPlayer))) for x in trainExamples]
 
     def learn(self):
@@ -80,6 +90,8 @@ class Coach():
         for i in range(1, self.args.numIters + 1):
             # bookkeeping
             print(f"\n🔁 Iteration {i}/{self.args.numIters}")
+            self.prediction_values = []
+            self.episode_results = []
             # examples of the iteration
             if not self.skipFirstSelfPlay or i > 1:
                 iterationTrainExamples = deque([], maxlen=self.args.maxlenOfQueue)
@@ -122,6 +134,23 @@ class Coach():
             print(f"✅ New model won {nwins}/{self.args.arenaCompare} games")
 
             log.info('NEW/PREV WINS : %d / %d ; DRAWS : %d' % (nwins, pwins, draws))
+
+            win_rate = 0.0 if (pwins + nwins) == 0 else 100.0 * nwins / (pwins + nwins)
+            avg_value = float(np.mean(self.prediction_values)) if self.prediction_values else 0.0
+            log_file = os.path.join(os.getcwd(), 'training_log.csv')
+            write_header = not os.path.isfile(log_file)
+            with open(log_file, 'a', newline='') as csvfile:
+                writer = csv.DictWriter(csvfile,
+                                       fieldnames=['iteration', 'win_rate', 'new_wins', 'old_wins', 'draws', 'avg_value'])
+                if write_header:
+                    writer.writeheader()
+                writer.writerow({'iteration': i,
+                                 'win_rate': f"{win_rate:.2f}",
+                                 'new_wins': nwins,
+                                 'old_wins': pwins,
+                                 'draws': draws,
+                                 'avg_value': f"{avg_value:.4f}"})
+
             if pwins + nwins == 0 or float(nwins) / (pwins + nwins) < self.args.updateThreshold:
                 log.info('REJECTING NEW MODEL')
                 self.nnet.load_checkpoint(folder=self.args.checkpoint, filename='temp.pth.tar')
