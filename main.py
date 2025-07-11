@@ -5,17 +5,14 @@ import coloredlogs
 import argparse
 from Coach import Coach
 from utils import *
+from game.KlondikeGame import KlondikeGame
+from klondike.klondikeNNet import NNet as klondikeNNet
+from othello.OthelloGame import OthelloGame
+from othello.pytorch.NNet import NNetWrapper as othelloNNet
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--game', default='othello', help='Name of the game to train')
 cmd_args, _ = parser.parse_known_args()
-
-if cmd_args.game.lower() == 'klondike':
-    from game.KlondikeGame import KlondikeGame as Game
-    from klondike.klondikeNNet import NNet as nn
-else:
-    from othello.OthelloGame import OthelloGame as Game
-    from othello.pytorch.NNet import NNetWrapper as nn
 
 log = logging.getLogger(__name__)
 
@@ -35,19 +32,22 @@ args = dotdict({
     'load_model': False,
     'load_folder_file': ('/dev/models/8x100x50','best.pth.tar'),
     'numItersForTrainExamplesHistory': 20,
+    'game': cmd_args.game.lower(),
 
 })
 
 
 def main():
-    log.info('Loading %s...', Game.__name__)
-    if cmd_args.game.lower() == 'othello':
-        g = Game(6)
+    if args.game == 'klondike':
+        log.info('Loading KlondikeGame...')
+        g = KlondikeGame()
+        nnet = klondikeNNet(g)
+    elif args.game == 'othello':
+        log.info('Loading OthelloGame...')
+        g = OthelloGame(6)
+        nnet = othelloNNet(g)
     else:
-        g = Game()
-
-    log.info('Loading %s...', nn.__name__)
-    nnet = nn(g)
+        raise ValueError(f"Unknown game {args.game}")
 
     if args.load_model:
         log.info('Loading checkpoint "%s/%s"...', args.load_folder_file[0], args.load_folder_file[1])
