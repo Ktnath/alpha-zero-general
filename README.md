@@ -9,7 +9,20 @@ To start training a model for Othello:
 ```bash
 python main.py
 ```
-Choose your framework and game in ```main.py```.
+By default this trains the Othello agent.  You can now select the game at
+runtime using the `--game` argument (available options are `othello` and the
+new simplified `klondike` solitaire implementation).  For example to train the
+Klondike agent run:
+
+```bash
+python main.py --game klondike
+```
+The game logic for Klondike is in `game/KlondikeGame.py` and the accompanying
+neural network in `klondike/klondikeNNet.py`.  All training parameters remain in
+`main.py`.  A minimal example of the game interacting with the network can be
+executed with `python test_klondike.py`.
+
+Choose your framework in ```main.py```.
 
 ### Docker Installation
 For easy environment setup, we can use [nvidia-docker](https://github.com/NVIDIA/nvidia-docker). Once you have nvidia-docker set up, we can then simply run:
