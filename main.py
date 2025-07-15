@@ -19,6 +19,11 @@ log = logging.getLogger(__name__)
 coloredlogs.install(level='INFO')  # Change this to DEBUG to see more info.
 
 args = dotdict({
+    # Paramètres d'apprentissage par imitation
+    'use_imitation': True,      # Activer l'apprentissage par imitation
+    'expert_games_file': './expert_games.pkl',  # Fichier contenant les parties d'expert
+    
+    # Paramètres d'apprentissage par renforcement
     'numIters': 1000,
     'numEps': 100,              # Number of complete self-play games to simulate during a new iteration.
     'tempThreshold': 15,        #
@@ -28,6 +33,7 @@ args = dotdict({
     'arenaCompare': 40,         # Number of games to play during arena play to determine if new net will be accepted.
     'cpuct': 1,
 
+    # Paramètres généraux
     'checkpoint': './temp/',
     'load_model': False,
     'load_folder_file': ('/dev/models/8x100x50','best.pth.tar'),
@@ -38,32 +44,40 @@ args = dotdict({
 
 
 def main():
-    if args.game == 'klondike':
-        log.info('Loading KlondikeGame...')
-        g = KlondikeGame()
-        nnet = klondikeNNet(g)
-    elif args.game == 'othello':
-        log.info('Loading OthelloGame...')
-        g = OthelloGame(6)
-        nnet = othelloNNet(g)
-    else:
-        raise ValueError(f"Unknown game {args.game}")
+    try:
+        if args.game == 'klondike':
+            log.info('Loading KlondikeGame...')
+            g = KlondikeGame()
+            log.info('Board size: %s', g.getBoardSize())
+            log.info('Action size: %s', g.getActionSize())
+            nnet = klondikeNNet(g)
+            log.info('Neural network created successfully')
+        elif args.game == 'othello':
+            log.info('Loading OthelloGame...')
+            g = OthelloGame(6)
+            nnet = othelloNNet(g)
+        else:
+            raise ValueError(f"Unknown game {args.game}")
 
-    if args.load_model:
-        log.info('Loading checkpoint "%s/%s"...', args.load_folder_file[0], args.load_folder_file[1])
-        nnet.load_checkpoint(args.load_folder_file[0], args.load_folder_file[1])
-    else:
-        log.warning('Not loading a checkpoint!')
+        if args.load_model:
+            log.info('Loading checkpoint "%s/%s"...', args.load_folder_file[0], args.load_folder_file[1])
+            nnet.load_checkpoint(args.load_folder_file[0], args.load_folder_file[1])
+        else:
+            log.warning('Not loading a checkpoint!')
 
-    log.info('Loading the Coach...')
-    c = Coach(g, nnet, args)
+        log.info('Loading the Coach...')
+        c = Coach(g, nnet, args)
 
-    if args.load_model:
-        log.info("Loading 'trainExamples' from file...")
-        c.loadTrainExamples()
+        if args.load_model:
+            log.info("Loading 'trainExamples' from file...")
+            c.loadTrainExamples()
 
-    log.info('Starting the learning process 🎉')
-    c.learn()
+        log.info('Starting the learning process 🎉')
+        log.info('Game parameters: numMCTSSims=%d, numEps=%d, numIters=%d', 
+                 args.numMCTSSims, args.numEps, args.numIters)
+        c.learn()
+    except Exception as e:
+        log.error('Error during execution: %s', str(e), exc_info=True)
 
 
 if __name__ == "__main__":

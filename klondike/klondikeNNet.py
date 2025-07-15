@@ -55,7 +55,7 @@ args = dotdict({
 })
 
 
-class NNet(NeuralNet):
+class NNetWrapper(NeuralNet):
     """Wrapper for training and using Klondike neural network."""
 
     def __init__(self, game):

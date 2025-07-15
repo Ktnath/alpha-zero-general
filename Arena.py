@@ -46,7 +46,11 @@ class Arena():
             if hasattr(player, "startGame"):
                 player.startGame()
 
-        while self.game.getGameEnded(board, curPlayer) == 0:
+        while True:
+            game_result = self.game.getGameEnded(board, curPlayer)
+            if game_result != 0:
+                break
+
             it += 1
             if verbose:
                 assert self.display
@@ -59,7 +63,9 @@ class Arena():
             if valids[action] == 0:
                 log.error(f'Action {action} is not valid!')
                 log.debug(f'valids = {valids}')
-                assert valids[action] > 0
+                # Si une action invalide est jouée, on considère que c'est une défaite
+                log.warning("Game ended due to invalid move")
+                return -curPlayer
 
             # Notifying the opponent for the move
             opponent = players[-curPlayer + 1]
@@ -74,9 +80,9 @@ class Arena():
 
         if verbose:
             assert self.display
-            print("Game over: Turn ", str(it), "Result ", str(self.game.getGameEnded(board, 1)))
+            print("Game over: Turn ", str(it), "Result ", str(game_result))
             self.display(board)
-        return curPlayer * self.game.getGameEnded(board, curPlayer)
+        return curPlayer * game_result
 
     def playGames(self, num, verbose=False):
         """

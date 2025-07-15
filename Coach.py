@@ -11,6 +11,7 @@ from tqdm import tqdm
 
 from Arena import Arena
 from MCTS import MCTS
+from lonelybot_py import analyze_state_py
 
 log = logging.getLogger(__name__)
 
@@ -45,38 +46,96 @@ class Coach():
 
         Returns:
             trainExamples: a list of examples of the form (canonicalBoard, currPlayer, pi,v)
-                           pi is the MCTS informed policy vector, v is +1 if
-                           the player eventually won the game, else -1.
+                           pi is the MCTS informed policy vector, v is the predicted value
+                           adjusted by intermediate rewards.
         """
         trainExamples = []
         board = self.game.getInitBoard()
         self.curPlayer = 1
         episodeStep = 0
+        max_steps = 1000  # Limite pour éviter les parties infinies
+        cumulative_reward = 0
 
         while True:
             episodeStep += 1
+            if episodeStep > max_steps:
+                log.warning(f"Game exceeded {max_steps} steps, forcing end with result -1")
+                self.episode_results.append(-1.0)
+                return [(x[0], x[2], -1 * ((-1) ** (x[1] != self.curPlayer))) for x in trainExamples]
+
             canonicalBoard = self.game.getCanonicalForm(board, self.curPlayer)
-            # predict value for analysis
             try:
                 _, v_pred = self.nnet.predict(canonicalBoard)
                 self.prediction_values.append(float(v_pred))
-            except Exception:
+                if episodeStep % 100 == 0:
+                    log.info(f"Step {episodeStep}, predicted value: {v_pred:.3f}, cumulative reward: {cumulative_reward:.3f}")
+            except Exception as e:
+                log.error(f"Prediction error at step {episodeStep}: {str(e)}")
                 pass
-            temp = int(episodeStep < self.args.tempThreshold)
 
-            pi = self.mcts.getActionProb(canonicalBoard, temp=temp)
+            temp = int(episodeStep < self.args.tempThreshold)
+            try:
+                pi = self.mcts.getActionProb(canonicalBoard, temp=temp)
+                if episodeStep % 100 == 0:
+                    log.info(f"Step {episodeStep}, policy entropy: {-np.sum(pi * np.log(pi + 1e-8)):.3f}")
+            except Exception as e:
+                log.error(f"MCTS error at step {episodeStep}: {str(e)}")
+                self.episode_results.append(-1.0)
+                return [(x[0], x[2], -1 * ((-1) ** (x[1] != self.curPlayer))) for x in trainExamples]
+
             sym = self.game.getSymmetries(canonicalBoard, pi)
             for b, p in sym:
-                trainExamples.append([b, self.curPlayer, p, None])
+                # Ajuster la valeur prédite avec la récompense cumulée
+                adjusted_value = v_pred + cumulative_reward
+                trainExamples.append([b, self.curPlayer, p, adjusted_value])
 
-            action = np.random.choice(len(pi), p=pi)
-            board, self.curPlayer = self.game.getNextState(board, self.curPlayer, action)
+            try:
+                action = np.random.choice(len(pi), p=pi)
+                next_board, next_player = self.game.getNextState(board, self.curPlayer, action)
+                
+                # Calculer la récompense intermédiaire basée sur l'analyse d'état
+                unknown_cards, remaining_cards, blocked_cols, mobility, deadlock_risk = analyze_state_py(self.game.state)
+                intermediate_reward = 0
+                
+                # Bonus pour les cartes révélées (moins de cartes inconnues)
+                revealed_cards = max(0, 24 - unknown_cards)  # 24 est le nombre total de cartes cachées au début
+                intermediate_reward += 0.15 * revealed_cards  # Bonus constant pour la révélation
+                
+                # Bonus exponentiel pour la mobilité
+                mobility_bonus = 0.3 * (2 ** (mobility - 1)) if mobility > 1 else 0
+                intermediate_reward += min(mobility_bonus, 1.0)  # Plafonné à 1.0
+                
+                # Bonus pour les colonnes non bloquées
+                unblocked_cols = 7 - blocked_cols  # 7 est le nombre total de colonnes
+                intermediate_reward += 0.25 * unblocked_cols  # Bonus linéaire pour chaque colonne libre
+                
+                # Pénalité pour le risque d'impasse avec seuil progressif
+                if deadlock_risk > 0.3:
+                    penalty = 0.5 * (deadlock_risk - 0.3) ** 2  # Pénalité quadratique
+                    intermediate_reward -= penalty
+                
+                # Bonus pour les cartes restantes (progression vers la victoire)
+                remaining_bonus = 0.2 * (1 - len(remaining_cards) / 52)  # 52 cartes au total
+                intermediate_reward += remaining_bonus
+                
+                # Bonus de continuation
+                intermediate_reward += 0.05  # Petit bonus constant
+                
+                cumulative_reward += intermediate_reward
+                board, self.curPlayer = next_board, next_player
+                
+            except Exception as e:
+                log.error(f"Action selection/execution error at step {episodeStep}: {str(e)}")
+                self.episode_results.append(-1.0)
+                return [(x[0], x[2], -1 * ((-1) ** (x[1] != self.curPlayer))) for x in trainExamples]
 
             r = self.game.getGameEnded(board, self.curPlayer)
-
             if r != 0:
+                log.info(f"Game ended after {episodeStep} steps with result {r}, final cumulative reward: {cumulative_reward:.3f}")
                 self.episode_results.append(float(r))
-                return [(x[0], x[2], r * ((-1) ** (x[1] != self.curPlayer))) for x in trainExamples]
+                # Ajuster la valeur finale avec la récompense cumulée
+                final_value = r + cumulative_reward
+                return [(x[0], x[2], final_value * ((-1) ** (x[1] != self.curPlayer))) for x in trainExamples]
 
     def learn(self):
         """
@@ -86,7 +145,24 @@ class Coach():
         It then pits the new neural network against the old one and accepts it
         only if it wins >= updateThreshold fraction of games.
         """
+        # Phase 1: Apprentissage par imitation si activé et si des parties d'expert sont disponibles
+        if hasattr(self.args, 'use_imitation') and self.args.use_imitation:
+            try:
+                from klondike.ImitationLearning import ImitationLearner
+                imitation_learner = ImitationLearner(self.nnet, self.args)
+                if hasattr(self.args, 'expert_games_file'):
+                    success = imitation_learner.run_imitation_learning(self.args.expert_games_file)
+                    if success:
+                        log.info("✅ Phase d'imitation terminée avec succès")
+                    else:
+                        log.warning("⚠️ Phase d'imitation terminée avec des erreurs")
+                else:
+                    log.warning("⚠️ Apprentissage par imitation activé mais aucun fichier de parties d'expert spécifié")
+            except Exception as e:
+                log.error(f"❌ Erreur lors de l'apprentissage par imitation: {str(e)}")
 
+        # Phase 2: Apprentissage par renforcement
+        log.info("🎮 Démarrage de l'apprentissage par renforcement")
         for i in range(1, self.args.numIters + 1):
             # bookkeeping
             print(f"\n🔁 Iteration {i}/{self.args.numIters}")
